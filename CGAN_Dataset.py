@@ -49,7 +49,7 @@ class CGAN_Dataset(Dataset):
 
         # Apply custom embeddings
         if self.text_embeddings_fn:
-            text_tokens = self.text_embeddings_fn(text, self.text_model_checkpoint)
+            text_tokens = self.text_embeddings_fn(text1,text2, self.text_model_checkpoint)
 
         return {
             'image': image,
