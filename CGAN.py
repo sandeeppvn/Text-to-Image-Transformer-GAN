@@ -59,9 +59,10 @@ print('Loading data')
 data = pd.read_pickle(data_path)
 # convert the pandas dataframe to a numpy array
 # Select only the image_embeddings and annot1 columns
-data = data[['image_embeddings', 'annot1']].to_numpy()
+
 # data = pd.read_pickle(data_path)
-# data['count_annotation'] = data.apply(lambda x: " ".join([str(x['answer']),x['has_animal']]), axis=1)
+data['count_annotation'] = data.apply(lambda x: " ".join([str(x['answer']),x['animal']]), axis=1)
+data = data[['image_embeddings', 'annot1','count_annotation']].to_numpy()
 
 train_data = data
 print('Data Shape:', train_data.shape)

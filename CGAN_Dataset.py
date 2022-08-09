@@ -35,7 +35,8 @@ class CGAN_Dataset(Dataset):
         # text = self.data.iloc[idx]['annot1']
 
         image = self.data[idx,0].squeeze()
-        text = self.data[idx,1]
+        text1 = self.data[idx,1]
+        text2 = self.data[idx,2]
 
 
         # Apply augmentation
