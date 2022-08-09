@@ -17,11 +17,11 @@ class Generator(nn.Module):
 
         self.model =nn.Sequential(
             nn.ConvTranspose2d(1024  , 512 , 4 ,2,1,bias = False),
-            nn.BatchNorm2d(64*16, momentum=0.1,  eps=0.8),
-            nn.ReLU(True),
-            nn.ConvTranspose2d(512, 64*8, 4, 2, 1, bias=False),
             nn.BatchNorm2d(64*8, momentum=0.1,  eps=0.8),
             nn.ReLU(True),
+            # nn.ConvTranspose2d(512, 64*8, 4, 2, 1, bias=False),
+            # nn.BatchNorm2d(64*8, momentum=0.1,  eps=0.8),
+            # nn.ReLU(True),
             nn.ConvTranspose2d(64*8, 64*4, 4, 2, 1,bias=False),
             nn.BatchNorm2d(64*4, momentum=0.1,  eps=0.8),
             nn.ReLU(True), 

@@ -217,6 +217,7 @@ for epoch in tqdm(range(CURRENT_EPOCH+1, EPOCHS)):
 
         image = input['image'].to(device)
         text = input['text']
+        count = input['count']
         text_tokens = input['text_tokens'] if input['text_tokens'] is not None else None
         input_ids = text_tokens["input_ids"].to(device)  
         token_type_ids = text_tokens["token_type_ids"].to(device) 
@@ -319,7 +320,7 @@ for epoch in tqdm(range(CURRENT_EPOCH+1, EPOCHS)):
         utils.save_image(
             generated_image[0],
             image[0],
-            text[0],
+            text[0]+"__"+count[0],
             os.path.join('Experiments', exp_name, 'saved_images', 'Epoch_' + str(epoch)+ '_Batch_' + str(BATCH_SIZE))
         )
         print("Saved images")
