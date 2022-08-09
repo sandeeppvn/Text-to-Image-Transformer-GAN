@@ -18,6 +18,7 @@ from tqdm import tqdm
 
 import matplotlib.pyplot as plt
 import time
+import random
 
 # Set current working directory to the folder where the script is located
 os.chdir(os.path.dirname(os.path.realpath(__file__)))
@@ -63,6 +64,7 @@ data = data[['image_embeddings', 'annot1']].to_numpy()
 # data = pd.read_pickle(data_path)
 # data['count_annotation'] = data.apply(lambda x: " ".join([str(x['answer']),x['has_animal']]), axis=1)
 
+# use the first 100 images for training
 train_data = data
 print('Data Shape:', train_data.shape)
 
@@ -126,8 +128,6 @@ discriminator_optimizer = optim.Adam(discriminator.parameters(), lr=LEARNING_RAT
 ########################################################################################################################
 
 CURRENT_EPOCH = 0
-CURRENT_GENERATOR_LOSS = 0
-CURRENT_DISCRIMINATOR_LOSS = 0
 
 # Set best loss to infinity
 BEST_GENERATOR_LOSS = float("inf")
@@ -144,27 +144,26 @@ if config['TRAIN']['resume'] != 'no':
     
     generator.load_state_dict(generator_file['model_state_dict'])
     generator_optimizer.load_state_dict(generator_file['optimizer_state_dict'])
-    CURRENT_GENERATOR_LOSS = generator_file['loss']
     generator.to(device)
 
     discriminator_file = torch.load(sorted(glob.glob(os.path.join('Experiments', exp_name, 'Discriminator', '*.pth')))[-1])
     discriminator.load_state_dict(discriminator_file['model_state_dict'])
     discriminator_optimizer.load_state_dict(discriminator_file['optimizer_state_dict'])
-    CURRENT_DISCRIMINATOR_LOSS = discriminator_file['loss']
     discriminator.to(device)
 
     print("Loaded Generator and Discriminator from epoch", CURRENT_EPOCH)
 
 
     # Load best model if exists
-    if os.path.isfile(os.path.join('Experiments', exp_name, 'best_model.pth')):
-        print("Loading best model...")
-        best_generator_file = torch.load(os.path.join('Experiments', exp_name, 'best_model.pth'))
+    if os.path.isfile(os.path.join('Experiments', exp_name, 'best_generator.pth')):
+        print("Loading best generator...")
+        best_generator_file = torch.load(os.path.join('Experiments', exp_name, 'best_generator.pth'))
         BEST_GENERATOR_LOSS = best_generator_file['loss']
 
-        best_discriminator_file = torch.load(os.path.join('Experiments', exp_name, 'best_model.pth'))
+    if os.path.isfile(os.path.join('Experiments', exp_name, 'best_discriminator.pth')):
+        print("Loading best discriminator...")
+        best_discriminator_file = torch.load(os.path.join('Experiments', exp_name, 'best_discriminator.pth'))
         BEST_DISCRIMINATOR_LOSS = best_discriminator_file['loss']
-    
 
 ########################################################################################################################
 #                                        Load the specific discriminator model if required                             #
@@ -198,6 +197,8 @@ if pick_discriminator != 'no':
 
 generator_loss_list = []
 discriminator_loss_list = []
+discriminator_real_loss_list  = []
+discriminator_fake_loss_list = []
 
 print("Starting training...")
 # STart timer
@@ -205,17 +206,24 @@ print("Starting training...")
 # Setup Training Loop
 for epoch in tqdm(range(CURRENT_EPOCH+1, EPOCHS)):
 
+    epoch_generator_loss = 0
+    epoch_discriminator_loss = 0
+    epoch_discriminator_real_loss = 0
+    epoch_discriminator_fake_loss = 0
+
     start_time = time.time()
     for index, input in tqdm(enumerate(train_loader)):
 
         image = input['image'].to(device)
-        # text = input['text'].to(device).unsqueeze(1).long()
+        text = input['text']
         text_tokens = input['text_tokens'] if input['text_tokens'] is not None else None
         input_ids = text_tokens["input_ids"].to(device)  
         token_type_ids = text_tokens["token_type_ids"].to(device) 
         attention_mask = text_tokens["attention_mask"].to(device)
 
-        text_embeddings = text_model(input_ids, token_type_ids, attention_mask)
+        with torch.no_grad():
+            text_embeddings = text_model(input_ids, token_type_ids, attention_mask)
+
         text_embeddings = text_embeddings.to(device)
 
 
@@ -223,12 +231,7 @@ for epoch in tqdm(range(CURRENT_EPOCH+1, EPOCHS)):
 
         real_target = Variable(torch.ones(image.size(0), 1).to(device))
         fake_target = Variable(torch.zeros(image.size(0), 1).to(device))
-
-
-        D_real_loss = utils.discriminator_loss(
-            discriminator(image, text_embeddings),
-            real_target
-        )
+        
 
         # Generate a noise vector for fake image generation
         noise_vector = torch.randn(image.size(0), noise_dim, device=device).to(device)
@@ -241,16 +244,22 @@ for epoch in tqdm(range(CURRENT_EPOCH+1, EPOCHS)):
             discriminator(generated_image.detach(), text_embeddings), 
             fake_target
         )
+        epoch_discriminator_fake_loss += D_fake_loss.item()
 
         # Get the discriminator loss for the real image
         D_real_loss = utils.discriminator_loss(
             discriminator(image, text_embeddings),
             real_target
         )
+        epoch_discriminator_real_loss += D_real_loss.item()
 
         # Get the average discriminator loss and backpropagate
         D_total_loss = (D_real_loss + D_fake_loss) / 2
-        discriminator_loss_list.append(D_total_loss.item())
+        epoch_discriminator_loss += D_total_loss.item()
+
+        # Get number of learning parameters in the discriminator
+        # discriminator_parameters = sum(p.numel() for p in discriminator.parameters() if p.requires_grad)
+        # print("Discriminator parameters:", discriminator_parameters)
         D_total_loss.backward()
         discriminator_optimizer.step()
 
@@ -260,18 +269,26 @@ for epoch in tqdm(range(CURRENT_EPOCH+1, EPOCHS)):
             discriminator(generated_image,text_embeddings), 
             real_target
         )
-        generator_loss_list.append(G_loss)
+        epoch_generator_loss += G_loss.item()
+
+        # Get number of learning parameters in the generator
+        # generator_parameters = sum(p.numel() for p in generator.parameters() if p.requires_grad)
+        # print("Generator parameters:", generator_parameters)
+
         G_loss.backward()
         generator_optimizer.step()
 
-    # Display the generated image and the real image next to each other using matplotlib
-    result_im = utils.im_convert(generated_image[8])
-        
-    # Save the generated image using matplotlib
-    plt.imsave(os.path.join('Experiments', exp_name, 'saved_images', '_epoch_' + str(epoch) + '_index_' + str(index) + '.png'),result_im)
-        
-    stop_time = time.time()
-    print("Time taken for epoch:", stop_time - start_time)
+    # Get the average losses for the epoch
+    epoch_generator_loss /= len(train_loader)
+    epoch_discriminator_loss /= len(train_loader)
+    epoch_discriminator_real_loss /= len(train_loader)
+    epoch_discriminator_fake_loss /= len(train_loader)
+
+    # Add the losses to the list
+    generator_loss_list.append(epoch_generator_loss)
+    discriminator_loss_list.append(epoch_discriminator_loss)
+    discriminator_real_loss_list.append(epoch_discriminator_real_loss)
+    discriminator_fake_loss_list.append(epoch_discriminator_fake_loss)
 
 
 
@@ -280,38 +297,74 @@ for epoch in tqdm(range(CURRENT_EPOCH+1, EPOCHS)):
     ##################################################################################################################
 
     if epoch % save_interval == 0:
+
+        # Save model checkpoints
         torch.save({
             'epoch': epoch,
             'model_state_dict': generator.state_dict(),
             'optimizer_state_dict': generator_optimizer.state_dict(),
-            'loss': G_loss,
-        }, os.path.join('Experiments', exp_name, 'Generator', '_epoch_' + str(epoch) + '.pth'))
+            'loss': epoch_generator_loss
+        }, os.path.join('Experiments', exp_name, 'saved_models', 'Generator', 'Epoch_' + str(epoch) + '.pth'))
         torch.save({
             'epoch': epoch,
             'model_state_dict': discriminator.state_dict(),
             'optimizer_state_dict': discriminator_optimizer.state_dict(),
-            'loss': D_total_loss,
-        }, os.path.join('Experiments', exp_name, 'Discriminator', '_epoch_' + str(epoch) + '.pth'))
+            'loss': epoch_discriminator_loss
+        }, os.path.join('Experiments', exp_name, 'saved_models', 'Discriminator', 'Epoch_' + str(epoch) + '.pth'))
+        print("Saved model checkpoints at epoch", epoch)
 
-        # TODO: Save fake and real images for visualization
 
-    # Save the best model
-    if G_loss < BEST_GENERATOR_LOSS:
-        print("Saving best model...")
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': generator.state_dict(),
-            'optimizer_state_dict': generator_optimizer.state_dict(),
-            'loss': G_loss,
-        }, os.path.join('Experiments', exp_name, 'best_model.pth'))
-        BEST_GENERATOR_LOSS = G_loss
+        # Save fake and real images for visualization with text as caption
+        utils.save_image(
+            generated_image[0],
+            image[0],
+            text[0],
+            os.path.join('Experiments', exp_name, 'saved_images', 'Epoch_' + str(epoch)+ '_Batch_' + str(BATCH_SIZE))
+        )
+        print("Saved images")
 
-    if D_total_loss < BEST_DISCRIMINATOR_LOSS:
-        print("Saving best model...")
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': discriminator.state_dict(),
-            'optimizer_state_dict': discriminator_optimizer.state_dict(),
-            'loss': D_total_loss,
-        }, os.path.join('Experiments', exp_name, 'best_model.pth'))
-        BEST_DISCRIMINATOR_LOSS = D_total_loss
+
+        # Generate and save plots of the loss functions
+        utils.save_loss_plot(
+            generator_loss_list,
+            discriminator_real_loss_list,
+            discriminator_fake_loss_list,
+            discriminator_loss_list,
+            os.path.join('Experiments', exp_name, 'saved_plots', 'Loss.png')
+        )
+        print("Saved loss plots at " +os.path.join('Experiments', exp_name, 'saved_plots', 'Loss.png'))
+        
+        # Save best discriminator model
+        if epoch_discriminator_loss < BEST_DISCRIMINATOR_LOSS:
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': discriminator.state_dict(),
+                'optimizer_state_dict': discriminator_optimizer.state_dict(),
+                'loss': epoch_discriminator_loss,
+            }, os.path.join('Experiments', exp_name, 'best_discriminator.pth'))
+            BEST_DISCRIMINATOR_LOSS = epoch_discriminator_loss
+            print("Saved best discriminator model")
+            
+        # Save best generator model
+        if epoch_generator_loss < BEST_GENERATOR_LOSS:
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': generator.state_dict(),
+                'optimizer_state_dict': generator_optimizer.state_dict(),
+                'loss': epoch_generator_loss,
+            }, os.path.join('Experiments', exp_name, 'best_generator.pth'))
+            BEST_GENERATOR_LOSS = epoch_generator_loss
+            print("Saved best generator model")
+
+        # Save the losses in logs
+        with open(os.path.join('Experiments', exp_name, 'saved_logs', 'generator_loss.txt'), 'a') as f:
+            f.write(str(G_loss) + '\n')
+        with open(os.path.join('Experiments', exp_name, 'saved_logs', 'discriminator_loss.txt'), 'a') as f:
+            f.write(str(D_total_loss) + '\n')
+        with open(os.path.join('Experiments', exp_name, 'saved_logs', 'discriminator_real_loss.txt'), 'a') as f:
+            f.write(str(D_real_loss) + '\n')
+        with open(os.path.join('Experiments', exp_name, 'saved_logs', 'discriminator_fake_loss.txt'), 'a') as f:
+            f.write(str(D_fake_loss) + '\n')
+        print("Saved logs")
+
+        

@@ -12,11 +12,14 @@ class Generator(nn.Module):
         )
 
         self.linear_text_embedding = nn.Sequential(
-            nn.Linear(text_embedding_dim, 16)
+            nn.Linear(text_embedding_dim, 4*4*512)
         )
 
         self.model =nn.Sequential(
-            nn.ConvTranspose2d(513, 64*8, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d(1024  , 512 , 4 ,2,1,bias = False),
+            nn.BatchNorm2d(64*16, momentum=0.1,  eps=0.8),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(512, 64*8, 4, 2, 1, bias=False),
             nn.BatchNorm2d(64*8, momentum=0.1,  eps=0.8),
             nn.ReLU(True),
             nn.ConvTranspose2d(64*8, 64*4, 4, 2, 1,bias=False),
@@ -42,7 +45,7 @@ class Generator(nn.Module):
         latent_output = latent_output.view(-1, 512,4,4)
 
         text_embeddings_output = self.linear_text_embedding(text_embeddings)
-        text_embeddings_output = text_embeddings_output.view(-1, 1, 4, 4)
+        text_embeddings_output = text_embeddings_output.view(-1, 512, 4, 4)
         
         concat = torch.cat((latent_output, text_embeddings_output), dim=1)
         

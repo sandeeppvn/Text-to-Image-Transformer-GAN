@@ -52,7 +52,7 @@ class CGAN_Dataset(Dataset):
 
         return {
             'image': image,
-            # 'text': text,
+            'text': text,
             'text_tokens': text_tokens
         }
 
