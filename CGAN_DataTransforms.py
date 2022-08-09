@@ -17,9 +17,9 @@ def preprocessing_fn(image):
     return result
 
 from transformers import AutoTokenizer
-def custom_text_embeddings_fn(text, text_model_checkpoint):
+def custom_text_embeddings_fn(text1, text2, text_model_checkpoint):
     tokenizer = AutoTokenizer.from_pretrained(text_model_checkpoint)
-    encoding = tokenizer(text, truncation = True,
+    encoding = tokenizer(text1,text2, truncation = True,
         # pad_to_max_length = True,
         padding = 'max_length',
         return_attention_mask = True,

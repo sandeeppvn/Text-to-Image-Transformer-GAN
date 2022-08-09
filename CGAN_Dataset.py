@@ -35,7 +35,8 @@ class CGAN_Dataset(Dataset):
         # text = self.data.iloc[idx]['annot1']
 
         image = self.data[idx,0].squeeze()
-        text = self.data[idx,1]
+        text1 = self.data[idx,1]
+        text2 = self.data[idx,2]
 
 
         # Apply augmentation
@@ -48,7 +49,7 @@ class CGAN_Dataset(Dataset):
 
         # Apply custom embeddings
         if self.text_embeddings_fn:
-            text_tokens = self.text_embeddings_fn(text, self.text_model_checkpoint)
+            text_tokens = self.text_embeddings_fn(text1,text2, self.text_model_checkpoint)
 
         return {
             'image': image,

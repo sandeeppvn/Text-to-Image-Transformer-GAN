@@ -52,6 +52,7 @@ class Generator(nn.Module):
         image = self.model(concat)
         return image
 
+
     
 class Discriminator(nn.Module):
     def __init__(self,text_embedding_dim):
