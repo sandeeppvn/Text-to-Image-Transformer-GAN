@@ -12,6 +12,13 @@ def clip_embed(text):
 ########################################################################################################################
 #                                            GAN HELPERS                                                               #
 ########################################################################################################################
+from numpy.random import random
+def smooth_positive_labels(y):
+    return y - 0.3 + (random(y.shape) * 0.5)
+
+
+def smooth_negative_labels(y):
+	return y + random(y.shape) * 0.3
 
 import torch
 # custom weights initialization called on gen and disc model
@@ -26,14 +33,16 @@ def weights_init(m):
 
 import torch.nn as nn
 def generator_loss(fake_output, label):
+    # Use reduce_mean on sigmoid cross entropy loss to average across batch
     adversarial_loss = nn.BCELoss() 
-    gen_loss = adversarial_loss(fake_output, label)
+    gen_loss = adversarial_loss(fake_output.double(), label)
     #print(gen_loss)
     return gen_loss
 
 def discriminator_loss(output, label):
-    adversarial_loss = nn.BCELoss() 
-    disc_loss = adversarial_loss(output, label)
+    # adversarial_loss = nn.BCEWithLogitsLoss()
+    adversarial_loss = nn.BCELoss()
+    disc_loss = adversarial_loss(output.double(), label)
     return disc_loss
 
 ########################################################################################################################

@@ -1,9 +1,8 @@
 import torch
-import argparse
 import torch.optim as optim
 from torch.autograd import Variable
+from torchvision import transforms
 
-import numpy as np
 
 import CGAN_utils as utils
 from CGAN_Model import Generator, Discriminator, TextModel
@@ -15,10 +14,9 @@ import glob
 import gdown
 import pandas as pd
 from tqdm import tqdm
+import pickle
 
-import matplotlib.pyplot as plt
 import time
-import random
 
 # Set current working directory to the folder where the script is located
 os.chdir(os.path.dirname(os.path.realpath(__file__)))
@@ -72,7 +70,8 @@ print('Data Shape:', train_data.shape)
 #Hyperparameters 
 BATCH_SIZE = int(config['HYPERPARAMETERS']['batch_size'])
 EPOCHS = int(config['HYPERPARAMETERS']['num_epochs'])
-LEARNING_RATE = float(config['HYPERPARAMETERS']['learning_rate'])
+GENERATOR_LEARNING_RATE = float(config['HYPERPARAMETERS']['generator_learning_rate'])
+DISCRIMINATOR_LEARNING_RATE = float(config['HYPERPARAMETERS']['discriminator_learning_rate'])
 
 save_interval = int(config['TRAIN']['save_interval'])
 
@@ -116,13 +115,18 @@ print('Creating model')
 # Model
 generator = Generator(noise_dim=noise_dim,text_embedding_dim=text_embedding_dim).to(device)
 generator.apply(utils.weights_init)
+print('Number of parameters in generator:', sum(p.numel() for p in generator.parameters() if p.requires_grad))
+
 
 discriminator = Discriminator(text_embedding_dim=text_embedding_dim).to(device)
 discriminator.apply(utils.weights_init)
+print('Number of parameters in discriminator:', sum(p.numel() for p in discriminator.parameters() if p.requires_grad))
 
 # Define the optimizers
-generator_optimizer = optim.Adam(generator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
-discriminator_optimizer = optim.Adam(discriminator.parameters(), lr=LEARNING_RATE, betas=(0.5, 0.999))
+generator_optimizer = optim.Adam(generator.parameters(), lr=GENERATOR_LEARNING_RATE, betas=(0.5, 0.999))
+# discriminator_optimizer = optim.Adam(discriminator.parameters(), lr=DISCRIMINATOR_LEARNING_RATE, betas=(0.5, 0.999))
+# Use momentum optimizer for discriminator
+discriminator_optimizer = optim.SGD(discriminator.parameters(), lr=DISCRIMINATOR_LEARNING_RATE, momentum=0.5)
 
 ########################################################################################################################
 #                                            Load latest Model and Best Model States                                   #
@@ -134,23 +138,32 @@ CURRENT_EPOCH = 0
 BEST_GENERATOR_LOSS = float("inf")
 BEST_DISCRIMINATOR_LOSS = float("inf")
 
+generator_loss_list = []
+discriminator_loss_list = []
+discriminator_real_loss_list  = []
+discriminator_fake_loss_list = []
+
 # If we want to resume training
 if config['TRAIN']['resume'] != 'no':
     print("Resuming training...")
 
     # Load the model with the highest epoch number from the Generator and Discriminator directories in sorted order    
-    generator_file = torch.load(sorted(glob.glob(os.path.join('Experiments', exp_name, 'Generator', '*.pth')))[-1])
+    generator_file = torch.load(sorted(glob.glob(os.path.join('Experiments', exp_name, 'saved_models', 'Generator', '*.pth')))[-1])
     
     CURRENT_EPOCH = generator_file['epoch']
     
     generator.load_state_dict(generator_file['model_state_dict'])
-    generator_optimizer.load_state_dict(generator_file['optimizer_state_dict'])
+    # generator_optimizer.load_state_dict(generator_file['optimizer_state_dict'])
+    # Load generator loss list as a pickle file
+    with open(os.path.join('Experiments', exp_name, 'saved_models', 'Generator', 'generator_loss_list.pkl'), 'rb') as f:
+        generator_loss_list = pickle.load(f)
+    
     generator.to(device)
 
-    discriminator_file = torch.load(sorted(glob.glob(os.path.join('Experiments', exp_name, 'Discriminator', '*.pth')))[-1])
-    discriminator.load_state_dict(discriminator_file['model_state_dict'])
-    discriminator_optimizer.load_state_dict(discriminator_file['optimizer_state_dict'])
-    discriminator.to(device)
+    # discriminator_file = torch.load(sorted(glob.glob(os.path.join('Experiments', exp_name, 'Discriminator', '*.pth')))[-1])
+    # discriminator.load_state_dict(discriminator_file['model_state_dict'])
+    # discriminator_optimizer.load_state_dict(discriminator_file['optimizer_state_dict'])
+    # discriminator.to(device)
 
     print("Loaded Generator and Discriminator from epoch", CURRENT_EPOCH)
 
@@ -161,10 +174,10 @@ if config['TRAIN']['resume'] != 'no':
         best_generator_file = torch.load(os.path.join('Experiments', exp_name, 'best_generator.pth'))
         BEST_GENERATOR_LOSS = best_generator_file['loss']
 
-    if os.path.isfile(os.path.join('Experiments', exp_name, 'best_discriminator.pth')):
-        print("Loading best discriminator...")
-        best_discriminator_file = torch.load(os.path.join('Experiments', exp_name, 'best_discriminator.pth'))
-        BEST_DISCRIMINATOR_LOSS = best_discriminator_file['loss']
+    # if os.path.isfile(os.path.join('Experiments', exp_name, 'best_discriminator.pth')):
+    #     print("Loading best discriminator...")
+    #     best_discriminator_file = torch.load(os.path.join('Experiments', exp_name, 'best_discriminator.pth'))
+    #     BEST_DISCRIMINATOR_LOSS = best_discriminator_file['loss']
 
 ########################################################################################################################
 #                                        Load the specific discriminator model if required                             #
@@ -196,10 +209,7 @@ if pick_discriminator != 'no':
 #                                            TRAINING LOOP                                                           #
 ########################################################################################################################
 
-generator_loss_list = []
-discriminator_loss_list = []
-discriminator_real_loss_list  = []
-discriminator_fake_loss_list = []
+
 
 print("Starting training...")
 # STart timer
@@ -231,15 +241,24 @@ for epoch in tqdm(range(CURRENT_EPOCH+1, EPOCHS)):
 
         discriminator_optimizer.zero_grad()
 
-        real_target = Variable(torch.ones(image.size(0), 1).to(device))
-        fake_target = Variable(torch.zeros(image.size(0), 1).to(device))
-        
+        real_target = Variable(torch.ones(image.size(0), 1))
+        fake_target = Variable(torch.zeros(image.size(0), 1))
+
+        # Apply Label Smoothing
+        real_target = utils.smooth_positive_labels(real_target).to(device)
+        fake_target = utils.smooth_negative_labels(fake_target).to(device)
+
+        # Mix 10 of the data of real_target and fake_target
+        # real_target = torch.cat((real_target, real_target, real_target, real_target, real_target, real_target, real_target, real_target, real_target, real_target), 0)
 
         # Generate a noise vector for fake image generation
         noise_vector = torch.randn(image.size(0), noise_dim, device=device).to(device)
-        
+
        # Generate fake image
         generated_image = generator(noise_vector, text_embeddings)
+
+        # Apply gaussian blur to the generated image
+        generated_image = transforms.GaussianBlur(kernel_size=(3,3))(generated_image)
 
         # Get the discriminator loss for the fake image
         D_fake_loss = utils.discriminator_loss(
@@ -259,9 +278,7 @@ for epoch in tqdm(range(CURRENT_EPOCH+1, EPOCHS)):
         D_total_loss = (D_real_loss + D_fake_loss) / 2
         epoch_discriminator_loss += D_total_loss.item()
 
-        # Get number of learning parameters in the discriminator
-        # discriminator_parameters = sum(p.numel() for p in discriminator.parameters() if p.requires_grad)
-        # print("Discriminator parameters:", discriminator_parameters)
+        
         D_total_loss.backward()
         discriminator_optimizer.step()
 
@@ -276,6 +293,8 @@ for epoch in tqdm(range(CURRENT_EPOCH+1, EPOCHS)):
         # Get number of learning parameters in the generator
         # generator_parameters = sum(p.numel() for p in generator.parameters() if p.requires_grad)
         # print("Generator parameters:", generator_parameters)
+
+        print('Losses:', D_total_loss.item(), G_loss.item())
 
         G_loss.backward()
         generator_optimizer.step()
@@ -358,15 +377,16 @@ for epoch in tqdm(range(CURRENT_EPOCH+1, EPOCHS)):
             BEST_GENERATOR_LOSS = epoch_generator_loss
             print("Saved best generator model")
 
-        # Save the losses in logs
-        with open(os.path.join('Experiments', exp_name, 'saved_logs', 'generator_loss.txt'), 'a') as f:
-            f.write(str(G_loss) + '\n')
-        with open(os.path.join('Experiments', exp_name, 'saved_logs', 'discriminator_loss.txt'), 'a') as f:
-            f.write(str(D_total_loss) + '\n')
-        with open(os.path.join('Experiments', exp_name, 'saved_logs', 'discriminator_real_loss.txt'), 'a') as f:
-            f.write(str(D_real_loss) + '\n')
-        with open(os.path.join('Experiments', exp_name, 'saved_logs', 'discriminator_fake_loss.txt'), 'a') as f:
-            f.write(str(D_fake_loss) + '\n')
-        print("Saved logs")
+        # Save the losses list as a pickle file
+        with open(os.path.join('Experiments', exp_name, 'saved_logs', 'discriminator_loss_list.pkl'), 'wb') as f:
+            pickle.dump(discriminator_loss_list, f)
+        with open(os.path.join('Experiments', exp_name, 'saved_logs', 'generator_loss_list.pkl'), 'wb') as f:
+            pickle.dump(generator_loss_list, f)
+        with open(os.path.join('Experiments', exp_name, 'saved_logs', 'discriminator_real_loss_list.pkl'), 'wb') as f:
+            pickle.dump(discriminator_real_loss_list, f)
+        with open(os.path.join('Experiments', exp_name, 'saved_logs', 'discriminator_fake_loss_list.pkl'), 'wb') as f:
+            pickle.dump(discriminator_fake_loss_list, f)
+        print("Saved loss lists")
+        
 
         

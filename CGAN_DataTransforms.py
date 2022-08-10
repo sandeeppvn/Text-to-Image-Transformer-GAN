@@ -2,10 +2,10 @@
 ########################################################################################################################
 #                                            DATA TRANFORM HELPERS                                                     #
 ########################################################################################################################
-
+from torchvision import transforms
 def augmentation_fn(image):
-    pass
-
+    # Apply Gauusian blur to the image
+    return transforms.GaussianBlur(kernel_size=(3,3))(image)
 from torchvision.transforms import Normalize
 def preprocessing_fn(image):
     # Normalize the image
