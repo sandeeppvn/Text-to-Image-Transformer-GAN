@@ -1,5 +1,8 @@
 # T2I-with-quantitative-embeddings
 
+## Results
+![results](results/Results.png)
+
 ## Architecture
 ![system-design](Architecture.png)
 
