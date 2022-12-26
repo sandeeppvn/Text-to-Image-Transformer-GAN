@@ -1,5 +1,8 @@
 # T2I-with-quantitative-embeddings
 
+## Architecture
+![system-design](Architecture.png)
+
 ### **Steps to reproduce the code**
 
 Part1: Data preparation and feature extraction (Including BERT Text Embeddings)
